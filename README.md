@@ -1,14 +1,9 @@
-EMMO
-====
-The European Materials Modelling Ontology (EMMO)
-
+EMMO -- The European Materials Modelling Ontology
+=================================================
 This repository contains a reference implementation of an API and a set
-some tools for working with EMMO.
+some tools for working with EMMO.  The tools are written in Python3.
 
-The tools are written in Python3.
-
-
-    **WARNING**: This is work in progress
+**WARNING**: This is work in progress...
 
 
 Requirements
