@@ -3840,7 +3840,6 @@ https://en.wikipedia.org/wiki/Variable_(mathematics)</EMMO_000190>
     <!-- https://emmc.info/emmo#EMMO_bfe0467d_91f6_4ccc_8a83_38b5193484ab -->
 
     <owl:NamedIndividual rdf:about="https://emmc.info/emmo#EMMO_bfe0467d_91f6_4ccc_8a83_38b5193484ab">
-        <rdf:type rdf:resource="https://emmc.info/emmo#EMMO_000167"/>
         <rdf:type rdf:resource="https://emmc.info/emmo#EMMO_000168"/>
         <EMMO_893cd6fc_e718_4302_b93f_568e0a3afd9c rdf:resource="https://emmc.info/EMMO_52424b60_4f75_4da8_ab09_465e81f7cf46"/>
         <rdfs:label>engine</rdfs:label>
