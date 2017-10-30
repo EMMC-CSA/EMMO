@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import os
 
@@ -7,18 +8,23 @@ sys.path.insert(1, os.path.abspath(os.path.join(thisdir, '..', '..')))
 import emmo
 
 
-
-
 onto = emmo.get_ontology('emmo-0.3_2017-10-26.owl')
 onto.load()
 onto.sync_reasoner()
 
 
 entity_graph = onto.get_dot_graph('entity')
-entity_graph.write_png('entity_graph.png')
+entity_graph.write_pdf('entity_graph.pdf')
 
 material_entity_graph = onto.get_dot_graph('material_entity', rankdir='RL')
-material_entity_graph.write_png('material_entity_graph.png')
+material_entity_graph.write_pdf('material_entity_graph.pdf')
 
 quality_graph = onto.get_dot_graph('quality', rankdir='RL')
-quality_graph.write_png('quality_graph.png')
+quality_graph.write_pdf('quality_graph.pdf')
+
+graph = onto.get_dot_graph('has_continuant_part', rankdir='RL')
+graph.write_pdf('has_continuant_part.pdf')
+
+
+relations_graph = onto.get_dot_relations_graph(rankdir='RL')
+relations_graph.write_pdf('relations.pdf')

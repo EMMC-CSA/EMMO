@@ -1,4 +1,6 @@
 *~
 *.pyc
+*.html
+emmodoc.md
 
 __pycache__

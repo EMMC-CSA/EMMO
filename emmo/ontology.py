@@ -4,6 +4,7 @@
 """
 import os
 import sys
+import re
 import itertools
 
 if sys.version_info < (3, 2):
@@ -16,12 +17,14 @@ thisdir = os.path.abspath(os.path.dirname(__file__))
 owldir = os.path.abspath(os.path.join(thisdir, '..', 'owl'))
 owlready2.onto_path.append(owldir)
 
+# owl types
 categories = (
-    #'annotation_properties',
+    'annotation_properties',
+    'data_properties',
+    'object_properties',
     'classes',
-    #'data_properties',
     'individuals',
-    'properties',
+    #'properties',
 )
 
 
@@ -38,18 +41,6 @@ def get_ontology(base_iri):
 
 
 
-class ThingClass(owlready2.ThingClass):
-    """Extension of the owlready2.ThingClass with some additional properties
-    and methods.
-    """
-    pass
-
-
-# Inject our ThingClass into the owlready2.namespace module
-owlready2.namespace.ThingClass = ThingClass
-
-
-
 class Ontology(owlready2.Ontology):
     """A generic class extending owlready2.Ontology.
 
@@ -58,14 +49,14 @@ class Ontology(owlready2.Ontology):
     """
 
     def get_dot_graph(self, root=None, graph=None, taxonomy=False,
-                      reflexions=False, **kw):
+                      other_relations=True, reflexions=False, **kw):
         """Returns a pydot graph object for visualising the ontology.
 
         Parameters
         ----------
-        root : None | string | owlready2.ThingClass
+        root : None | string | owlready2.ThingClass instance
             Name or owlready2 entity of root node to plot subgraph
-            below.  If None, all classes will be included in the
+            below.  If `root` is None, all classes will be included in the
             subgraph.
         graph : None | pydot.Dot instance
             Pydot graph object to plot into.  If None, a new graph object
@@ -73,6 +64,8 @@ class Ontology(owlready2.Ontology):
         taxonomy : bool
             Whether to only visualise the taxonomy (i.e. only include
             is_a relations).
+        other_relations : bool
+            Whether to visualise relations other than "is-a"-relations.
         reflexions : bool
             Whether to visualise reflective relations both ways.
 
@@ -93,6 +86,13 @@ class Ontology(owlready2.Ontology):
         if root is None:
             for root in self.get_root_classes():
                 self.get_dot_graph(root=root, graph=graph, taxonomy=taxonomy,
+                                   other_relations=other_relations,
+                                   reflexions=reflexions)
+            return graph
+        elif isinstance(root, (list, tuple, set)):
+            for r in root:
+                self.get_dot_graph(root=r, graph=graph, taxonomy=taxonomy,
+                                   other_relations=other_relations,
                                    reflexions=reflexions)
             return graph
         elif isinstance(root, str):
@@ -114,9 +114,23 @@ class Ontology(owlready2.Ontology):
                                reflexions=reflexions)
 
         if not taxonomy:
+            #for e in
             pass
 
         return graph
+
+    def get_dot_relations_graph(self, graph=None, **kw):
+        """Returns a disjoined graph of all relations.
+
+        This method simply calls get_dot_graph() with all root relations.
+        All arguments are passed on.
+        """
+        roots = [relation for relation in self.object_properties()
+                 if not [r for r in relation.is_a
+                         if r not in (owlready2.ObjectProperty,
+                                      owlready2.ObjectPropertyClass,
+                                      owlready2.TransitiveProperty)]]
+        return self.get_dot_graph(root=roots, graph=graph, **kw)
 
     def get_root_classes(self):
         """Returns a list or root classes."""
@@ -126,8 +140,8 @@ class Ontology(owlready2.Ontology):
     def get_by_label(self, label):
         """Returns entity by label.
 
-        If several entities have the same label, only the one that if
-        first found is returned.  A KeyError is raised if `label`
+        If several entities have the same label, only the one which is
+        found first is returned.  A KeyError is raised if `label`
         cannot be found.
         """
         for category in categories:
@@ -135,7 +149,7 @@ class Ontology(owlready2.Ontology):
             for entity in method():
                 if label in entity.label:
                     return entity
-        raise KeyError('No such label in ontology "%s": %s' % (
+        raise KeyError('Ontology "%s" has no such label: %s' % (
             onto.name, label))
 
     def get_by_label_all(self, label):
@@ -151,44 +165,254 @@ class Ontology(owlready2.Ontology):
 
     def get_annotations(self, entity):
         """Returns a dict with annotations for `entity`.  Entity may be given
-        either as a ThingClass object or a label."""
+        either as a ThingClass object or as a label."""
         if isinstance(entity, str):
             entity = self.get_by_label(entity)
-        return {
-            a.label.first(): [
+        d = {'comment': entity.comment}
+        for a in self.annotation_properties():
+            d[a.label.first()] = [
                 o.strip('"') for s, p, o in
                 self.get_triples(entity.storid, a.storid, None)]
-            for a in self.annotation_properties()}
+        return d
+
+    _markdown_template = dict(
+        point='  - {point}\n',
+        points='\n\n{points}\n',
+        annotation='**{key}:** {value}\n\n',
+        item='### {label}\n\n{annotations}\n',
+        list='{items}',
+        document='# Controlled vocabulary\nBased on {ontology.name}.\n\n'
+                 '## Relations\n\n{relations}\n\n'
+                 '## Entities\n\n{entities}\n\n'
+                 '## Individuals\n\n{individuals}',
+    )
+    _html_template = dict(
+        link='<a href="#{name}">{name}</a>',
+        point='      <li>{point}</li>\n',
+        points='    <ul>\n      {points}\n    </ul>\n',
+        annotation='  <dd><strong>{key}:</strong> {value}</dd>\n',
+        item='  <dt><dfn id="{label}">{label}</dfn></dt>\n{annotations}\n',
+        list='<dl>\n{items}\n</dl>',
+        document='\n'.join(['<h1>Controlled vocabulary</h1>',
+                            'Based on {ontology.name}.',
+                            '<h2>Relations</h2>',
+                            '{relations}',
+                            '<h2>Entities</h2>',
+                            '{entities}',
+                            '<h2>Individuals</h2>',
+                            '{individuals}']),
+        substitutions=[(r'\n\n', r'<p>'),
+                       (r'\n', r'<br>\n'),
+                       (r'<p>', r'<p>\n\n'),
+                       (r'\u2018([^\u2019]*)\u2019', r'<q>\1</q>'),
+                       (r'\u2019', r"'"),
+                       (r'\u2260', r"&ne;"),
+                       (r'\u2264', r"&le;"),
+                       (r'\u2265', r"&ge;"),
+                       (r'\u226A', r"&x226A;"),
+                       (r'\u226B', r"&x226B;"),
+                       (r'"Y$', r""),  # strange noice added by owlready2
+        ],
+    )
+    def get_vocabulary(self, items=None, template='html',
+                     show_individuals=True):
+        """Returns a controlled vocabulary describing `items`.
+
+        By default all entities, relations and individuals in this ontology
+        are included.
+
+        Parameters
+        ----------
+        items : sequence
+            The entities (owl classes), relations (owl object properties)
+            and individuals (instances) to describe.  They may be
+            given as either ThingClass, ObjectPropertyClass or Thing
+            objects or as label strings.  The default is to document
+            all relations and entities.
+        template : dict | string
+            A dict defining the following template strings (and substitutions):
+
+            :link: Formats a link.
+               Substitutions: {name}
+            :point: Formats a point (list item).
+               Substitutions: {point}, {ontology}
+            :points: Formats a list of points.  Used within annotations.
+               Substitutions: {points}, {ontology}
+            :annotation: Formats an annotation.
+                Substitutions: {key}, {value}, {ontology}
+            :item: Formats an entity or a relation with annotations.
+                Substitutions: {label}, {item}, {ontology}
+            :list: Formats a list of items.
+                Substitutions: {items}, {ontology}
+            :document: Formats a default document with all relations and
+                entities.  Only used if `items` is not given.
+                Substitutions: {relations}, {entities}, {ontology}
+            :substitutions: list of ``(regex, sub)`` pairs for substituting
+                annotation values.
+
+            If `template` is a string, it refers to a pre-defined template.
+            Currently pre-defined templates: "markdown", "html"
+        show_individuals : bool
+            Whether to also include individuals (instances).
+        """
+        if isinstance(template, str):
+            template = getattr(self, '_%s_template' % template)
+
+        link = template.get('link', '{name}')
+        point_template = template.get('point', '{point}')
+        points_template = template.get('points', '{points}')
+        annotation_template = template.get('annotation', '{key}: {value}\n')
+        item_template = template.get('item', '{annotations}\n\n')
+        list_template = template.get('list', '{items}\n\n')
+        doc_template = template.get('document', '{entities}')
+        substitutions = template.get('substitutions', [])
+
+        if items is None:
+            relations = self.get_vocabulary(self.object_properties(), template)
+            entities = self.get_vocabulary(self.classes(), template)
+            individuals = self.get_vocabulary(self.individuals(), template)
+            return doc_template.format(relations=relations, entities=entities,
+                                       individuals=individuals,
+                                       ontology=self)
+
+        # Allow specifying items by label
+        items = [onto.get_by_label(item) if isinstance(item, str) else item
+                 for item in items]
+
+        # Sort annotations
+        order = dict(definition='00', axiom='01', theorem='02',
+                     elucidation='03', domain='04', range='05', example='06')
+        sorter=lambda key: order.get(key, key)
+
+        litems = []
+        for item in sorted(items, key=lambda i: i.label):
+            lannotations = []
+
+            # Add annotations
+            annotations = self.get_annotations(item)
+            for key in sorted(annotations.keys(), key=sorter):
+                for value in annotations[key]:
+                    for reg, sub in template.get('substitutions', []):
+                        value = re.sub(reg, sub, value)
+                    lannotations.append(annotation_template.format(
+                        key=key.capitalize(), value=value, ontology=self))
+
+            # ...add iri
+            lannotations.append(annotation_template.format(
+                key='IRI', value=item.iri, ontology=self))
+
+            # ...add relations from is_a
+            points = []
+            nonProp = (owlready2.ThingClass, #owlready2.Restriction,
+                       owlready2.And, owlready2.Or, owlready2.Not)
+            for p in item.is_a:
+                if (isinstance(p, nonProp) or
+                    (isinstance(item, owlready2.PropertyClass) and
+                     isinstance(p, owlready2.PropertyClass))):
+                    points.append(point_template.format(
+                        point='is_a: ' + asstring(p, link), ontology=self))
+                else:
+                    points.append(point_template.format(
+                        point=asstring(p, link), ontology=self))
+
+            # ...add equivalent_to relations
+            for e in item.equivalent_to:
+                points.append(point_template.format(
+                    point='equivalent_to: ' + asstring(e, link)))
+
+            # ...add disjoint_with relations
+            if hasattr(item, 'disjoints'):
+                for d in item.disjoints():
+                    for e in d.entities:
+                        if e is not item:
+                            points.append(point_template.format(
+                                point='disjoint_with: ' + asstring(e, link),
+                                ontology=self))
+
+            # ...add inverse_of relations
+            if hasattr(item, 'inverse_property') and item.inverse_property:
+                points.append(point_template.format(
+                    point='inverse_of: ' + asstring(
+                        item.inverse_property, link)))
+
+            # ...add domain restrictions
+            for d in getattr(item, 'domain', ()):
+                points.append(point_template.format(
+                    point='domain: ' + asstring(d, link)))
+
+            # ...add range restrictions
+            for d in getattr(item, 'range', ()):
+                points.append(point_template.format(
+                    point='range: ' + asstring(d, link)))
+
+            # Relations
+            if points:
+                value = points_template.format(
+                    points=''.join(points), ontology=self)
+                lannotations.append(annotation_template.format(
+                    key='Relations', value=value, ontology=self))
+
+            # Instances (individuals)
+            if show_individuals and hasattr(item, 'instances'):
+                points = []
+                for e in item.instances():
+                    points.append(point_template.format(
+                        point=asstring(e, link), ontology=self))
+                if points:
+                    value = points_template.format(
+                        points=''.join(points), ontology=self)
+                    lannotations.append(annotation_template.format(
+                        key='Individuals', value=value, ontology=self))
+
+            litems.append(
+                item_template.format(label=item.label.first(), item=item,
+                                     ontology=self,
+                                     annotations=''.join(lannotations)))
+        return list_template.format(items=''.join(litems), ontology=self)
 
 
+def asstring(expr, link='{name}', n=0):
+    """Returns a string representation of `expr`, which may be an entity,
+    restriction, or logical expression of these.  `link` is a format
+    string for formatting references to entities or relations.
+    `n` is the recursion depth and only intended for internal use.
+    """
+    def fmt(e):
+        """Returns the formatted label of `e`."""
+        if hasattr(e, 'label') and e.label:
+            return link.format(name=e.label[0])
+        else:
+            return str(e).replace('owl.', 'owl:')
 
-
-
-
-if __name__ == '__main__':
-    #owlready2.onto_path.append(thisdir)
-
-    emmo = get_ontology('emmo-0.3_2017-10-26.owl')
-    emmo.load()
-
-    onto = owlready2.get_ontology('emmo-0.2_2017-10-11_fix.owl')
-    onto.load()
-    onto.sync_reasoner()
-
-    graph = onto.get_dot_graph()
-    graph.write_pdf('aaa.pdf')
-
-    entity_graph = onto.get_dot_graph('entity')
-    entity_graph.write_png('entity_graph.png')
-
-    material_entity_graph = onto.get_dot_graph('material_entity')
-    material_entity_graph.write_png('material_entity_graph.png')
-
-    material_entity_graph2 = onto.get_dot_graph('material_entity', rankdir='RL')
-    material_entity_graph2.write_png('material_entity_graph2.png')
-
-    quality_graph = onto.get_dot_graph('quality')
-    quality_graph.write_png('quality_graph.png')
-
-    quality_graph2 = onto.get_dot_graph('quality', rankdir='RL')
-    quality_graph2.write_png('quality_graph2.png')
+    if isinstance(expr, owlready2.Restriction):
+        rlabel = owlready2.class_construct._restriction_type_2_label[expr.type]
+        if n == 0:
+            s = '%s: %s'
+            n -= 1
+        elif expr.type in (owlready2.SOME, owlready2.ONLY,
+                           owlready2.VALUE, owlready2.HAS_SELF):
+            s = '(%%s %s %%s)' % rlabel
+        else:
+            s = '(%%s %s %d %%s)' % (rlabel, expr.cardinality)
+        return s % (fmt(expr.property), asstring(expr.value, link, n + 1))
+    elif isinstance(expr, owlready2.Or):
+        s = '%s' if n == 0 else '(%s)'
+        return s % ' or '.join([asstring(c, link, n + 1)
+                                     for c in expr.Classes])
+    elif isinstance(expr, owlready2.And):
+        s = '%s' if n == 0 else '(%s)'
+        return s % ' and '.join([asstring(c, link, n + 1)
+                                      for c in expr.Classes])
+    elif isinstance(expr, owlready2.Not):
+        return 'not %s' % asstring(expr.Class, link, n + 1)
+    elif isinstance(expr, owlready2.ThingClass):
+        return fmt(expr)
+    elif isinstance(expr, owlready2.PropertyClass):
+        return fmt(expr)
+    elif isinstance(expr, owlready2.Thing):  # instance (individual)
+        return fmt(expr)
+    elif isinstance(expr, bool):
+        return repr(expr)
+    else:
+        raise RuntimeError('Unknown expression: %r (type: %r)' % (
+            expr, type(expr)))
